@@ -1,6 +1,5 @@
 from flask import Flask, render_template, request, send_file
 import yt_dlp
-import os
 
 app = Flask(__name__)
 
@@ -17,7 +16,8 @@ def download_video():
     try:
         ydl_opts = {
             'outtmpl': '%(title)s.%(ext)s',
-            'format': 'bestvideo+bestaudio/best'
+            'format': 'bestvideo+bestaudio/best',
+            'cookies': 'cookies.txt' 
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
