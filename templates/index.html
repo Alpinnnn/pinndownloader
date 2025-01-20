@@ -28,18 +28,19 @@
             }
         }
 
-        .format-card {
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .format-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-        }
-
-        .video-info {
+        .video-card {
             display: none;
+        }
+
+        .format-row:hover {
+            background-color: #f8f9fa;
+            cursor: pointer;
+        }
+
+        .thumbnail-img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
         }
     </style>
 </head>
@@ -49,105 +50,111 @@
         <h1 class="text-center mb-4">YouTube Video Downloader</h1>
         <div class="row justify-content-center">
             <div class="col-md-8">
-                <form id="videoForm" class="mb-4">
-                    <div class="input-group mb-3">
-                        <input type="text" class="form-control" name="url" id="url" placeholder="Paste YouTube URL here"
+                <!-- URL Input Form -->
+                <form id="urlForm" class="mb-4">
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="videoUrl" placeholder="Paste YouTube URL here"
                             required>
-                        <button class="btn btn-primary" type="submit">Get Video Info</button>
+                        <button class="btn btn-primary" type="submit">Get Video</button>
                     </div>
                 </form>
 
-                <div id="loader" class="loader"></div>
+                <!-- Loading Spinner -->
+                <div id="loader" class="loader mb-4"></div>
+
+                <!-- Error Alert -->
                 <div id="error" class="alert alert-danger d-none"></div>
 
-                <!-- Video Information Section -->
-                <div id="videoInfo" class="video-info mb-4">
-                    <div class="card">
-                        <div class="card-body">
-                            <h4 id="videoTitle" class="card-title"></h4>
-                            <p id="videoDuration" class="card-text"></p>
+                <!-- Video Information Card -->
+                <div id="videoCard" class="video-card card mb-4">
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-5">
+                                <img id="thumbnail" class="thumbnail-img mb-3" src="" alt="Video thumbnail">
+                            </div>
+                            <div class="col-md-7">
+                                <h5 id="videoTitle" class="card-title"></h5>
+                                <p id="videoDuration" class="card-text"></p>
+                            </div>
+                        </div>
+
+                        <!-- Format Selection Table -->
+                        <div class="table-responsive mt-3">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Resolution</th>
+                                        <th>Size</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="formatList"></tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
-
-                <!-- Format Selection Section -->
-                <div id="formatList" class="row g-4"></div>
             </div>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        document.getElementById('videoForm').addEventListener('submit', async function (e) {
+        let currentVideoUrl = '';
+
+        document.getElementById('urlForm').addEventListener('submit', async function (e) {
             e.preventDefault();
 
+            const url = document.getElementById('videoUrl').value;
+            currentVideoUrl = url;
             const loader = document.getElementById('loader');
             const error = document.getElementById('error');
-            const videoInfo = document.getElementById('videoInfo');
-            const formatList = document.getElementById('formatList');
-            const url = document.getElementById('url').value;
+            const videoCard = document.getElementById('videoCard');
 
             // Reset UI
             loader.style.display = 'block';
             error.classList.add('d-none');
-            videoInfo.style.display = 'none';
-            formatList.innerHTML = '';
+            videoCard.style.display = 'none';
 
             try {
-                // Get video information
                 const formData = new FormData();
                 formData.append('url', url);
 
-                const response = await fetch('/get-video-info', {
+                const response = await fetch('/get-formats', {
                     method: 'POST',
                     body: formData
                 });
 
                 const data = await response.json();
 
-                if (!response.ok) {
-                    throw new Error(data.error || 'Failed to get video information');
-                }
+                if (!response.ok) throw new Error(data.error || 'Failed to get video info');
 
-                // Display video information
+                // Update video information
+                document.getElementById('thumbnail').src = data.thumbnail;
                 document.getElementById('videoTitle').textContent = data.title;
                 document.getElementById('videoDuration').textContent =
                     `Duration: ${Math.floor(data.duration / 60)}:${(data.duration % 60).toString().padStart(2, '0')}`;
-                videoInfo.style.display = 'block';
 
-                // Display format options
+                // Update format list
+                const formatList = document.getElementById('formatList');
+                formatList.innerHTML = '';
+
                 data.formats.forEach(format => {
-                    const formatCard = document.createElement('div');
-                    formatCard.className = 'col-md-6 col-lg-4';
-                    formatCard.innerHTML = `
-                        <div class="card format-card">
-                            <div class="card-body">
-                                <h5 class="card-title">${format.resolution}</h5>
-                                <p class="card-text">
-                                    Format: ${format.ext}<br>
-                                    Size: ${formatFileSize(format.filesize)}<br>
-                                    Quality: ${format.format_note || 'Normal'}
-                                </p>
-                                <button class="btn btn-success btn-sm download-btn" 
-                                        data-url="${format.url}" 
-                                        data-filename="${data.title}.${format.ext}">
-                                    Download
-                                </button>
-                            </div>
-                        </div>
+                    const row = formatList.insertRow();
+                    row.className = 'format-row';
+
+                    row.innerHTML = `
+                        <td>${format.resolution}</td>
+                        <td>${formatFileSize(format.filesize)}</td>
+                        <td>
+                            <button class="btn btn-success btn-sm" 
+                                    onclick="downloadVideo('${format.format_id}')">
+                                Download
+                            </button>
+                        </td>
                     `;
-                    formatList.appendChild(formatCard);
                 });
 
-                // Add click handlers for download buttons
-                document.querySelectorAll('.download-btn').forEach(btn => {
-                    btn.addEventListener('click', function () {
-                        const a = document.createElement('a');
-                        a.href = this.dataset.url;
-                        a.download = this.dataset.filename;
-                        a.click();
-                    });
-                });
+                videoCard.style.display = 'block';
 
             } catch (err) {
                 error.textContent = err.message;
@@ -157,8 +164,48 @@
             }
         });
 
+        async function downloadVideo(formatId) {
+            try {
+                const formData = new FormData();
+                formData.append('url', currentVideoUrl);
+                formData.append('format_id', formatId);
+
+                const response = await fetch('/download', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Download failed');
+                }
+
+                // Get the filename from the Content-Disposition header
+                const disposition = response.headers.get('Content-Disposition');
+                const filename = disposition.split('filename=')[1].replace(/"/g, '');
+
+                // Create a blob from the response
+                const blob = await response.blob();
+
+                // Create a download link and click it
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+
+            } catch (err) {
+                const error = document.getElementById('error');
+                error.textContent = err.message;
+                error.classList.remove('d-none');
+            }
+        }
+
         function formatFileSize(bytes) {
-            if (!bytes) return 'Unknown size';
+            if (!bytes) return 'Unknown';
             const units = ['B', 'KB', 'MB', 'GB'];
             let size = bytes;
             let unitIndex = 0;

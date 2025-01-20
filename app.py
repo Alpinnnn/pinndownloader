@@ -1,6 +1,8 @@
 import os
 import subprocess
-from flask import Flask, render_template, request, jsonify
+import json
+from flask import Flask, render_template, request, jsonify, send_file
+import yt_dlp
 
 app = Flask(__name__)
 
@@ -8,18 +10,68 @@ app = Flask(__name__)
 def index():
     return render_template('index.html')
 
-@app.route("/get-video-info", methods=["POST"])
-def get_video_info():
+@app.route("/get-formats", methods=["POST"])
+def get_formats():
     video_url = request.form.get("url")
     if not video_url:
         return jsonify({"error": "URL tidak boleh kosong"}), 400
 
     try:
-        # Dapatkan informasi video menggunakan yt-dlp
+        # Gunakan yt-dlp untuk mendapatkan info video
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'cookies': 'cookies.txt'
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            
+            # Filter format yang memiliki video+audio
+            formats = []
+            for f in info['formats']:
+                if f.get('vcodec') != 'none' and f.get('acodec') != 'none':
+                    resolution = f.get('resolution', 'N/A')
+                    # Hanya ambil format dengan resolusi standar
+                    if resolution in ['144p', '240p', '360p', '480p', '720p', '1080p']:
+                        formats.append({
+                            'format_id': f['format_id'],
+                            'resolution': resolution,
+                            'filesize': f.get('filesize', 0),
+                            'ext': f['ext']
+                        })
+
+            # Sort formats berdasarkan resolusi
+            resolution_order = ['144p', '240p', '360p', '480p', '720p', '1080p']
+            formats.sort(key=lambda x: resolution_order.index(x['resolution']) if x['resolution'] in resolution_order else -1)
+
+            response = {
+                'title': info['title'],
+                'thumbnail': info['thumbnail'],
+                'duration': info['duration'],
+                'formats': formats
+            }
+            
+            return jsonify(response)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route("/download", methods=["POST"])
+def download_video():
+    try:
+        video_url = request.form.get("url")
+        format_id = request.form.get("format_id")
+        
+        if not video_url or not format_id:
+            return jsonify({"error": "URL dan format harus diisi"}), 400
+
+        # Download video dengan format yang dipilih
         command = [
             "yt-dlp",
             "--cookies", "cookies.txt",
-            "-J",  # Output dalam format JSON
+            "-f", format_id,
+            "-o", "downloads/%(title)s.%(ext)s",
             video_url
         ]
         
@@ -28,42 +80,20 @@ def get_video_info():
         if result.returncode != 0:
             return jsonify({"error": result.stderr}), 500
 
-        # Parse output JSON dan ambil informasi yang diperlukan
-        import json
-        video_info = json.loads(result.stdout)
-        
-        # Filter dan format informasi yang diperlukan
-        formats = []
-        for f in video_info.get('formats', []):
-            # Skip format yang tidak memiliki URL
-            if not f.get('url'):
-                continue
-                
-            format_info = {
-                'format_id': f.get('format_id'),
-                'ext': f.get('ext'),
-                'quality': f.get('quality', ''),
-                'resolution': f.get('resolution', 'N/A'),
-                'filesize': f.get('filesize', 0),
-                'url': f.get('url'),
-                'format_note': f.get('format_note', ''),
-                'vcodec': 'video only' if f.get('vcodec') != 'none' and f.get('acodec') == 'none' else \
-                         'audio only' if f.get('vcodec') == 'none' and f.get('acodec') != 'none' else \
-                         'video+audio'
-            }
-            formats.append(format_info)
-        
-        # Filter format yang memiliki video+audio saja untuk kemudahan user
-        formats = [f for f in formats if f['vcodec'] == 'video+audio']
-        
-        response = {
-            'title': video_info.get('title', ''),
-            'thumbnail': video_info.get('thumbnail', ''),
-            'duration': video_info.get('duration', 0),
-            'formats': formats
-        }
-        
-        return jsonify(response)
+        # Cari file yang baru didownload
+        downloaded_file = None
+        for file in os.listdir('downloads'):
+            downloaded_file = os.path.join('downloads', file)
+            break
+            
+        if not downloaded_file:
+            return jsonify({"error": "File tidak ditemukan"}), 500
+
+        return send_file(
+            downloaded_file,
+            as_attachment=True,
+            download_name=os.path.basename(downloaded_file)
+        )
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
