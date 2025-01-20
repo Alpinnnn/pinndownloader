@@ -21,7 +21,7 @@ def get_formats():
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
-            'cookies': 'cookies.txt'
+            '--cookies': 'cookies.txt'
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
