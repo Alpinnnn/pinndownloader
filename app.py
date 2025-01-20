@@ -9,29 +9,26 @@ app = Flask(__name__)
 def index():
     return render_template('index.html')
 
-@app.route("/download", methods=["POST"])
+@app.route('/download', methods=['POST'])
 def download_video():
-    video_url = request.form["url"]
-    cookies_path = "cookies.txt"  # Path ke file cookies
-    output_path = "downloads/video.mp4"
+    url = request.form.get('video_url')
+    if not url:
+        return "URL tidak valid!", 400
 
     try:
-        # Jalankan perintah yt-dlp
-        subprocess.run(
-            [
-                "yt-dlp",
-                "--cookies", cookies_path,
-                "-o", output_path,
-                video_url
-            ],
-            check=True
-        )
+        ydl_opts = {
+            'outtmpl': '%(title)s.%(ext)s',
+            'format': 'bestvideo+bestaudio/best',
+            'cookies': 'cookies.json'  # Menambahkan path ke file cookies
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            filename = ydl.prepare_filename(info)
+            ydl.download([url])
 
-        # Kirim file sebagai response
-        return send_file(output_path, as_attachment=True)
-
-    except subprocess.CalledProcessError as e:
-        return f"Terjadi kesalahan: {e}"
+        return send_file(filename, as_attachment=True)
+    except Exception as e:
+        return f"Terjadi kesalahan: {str(e)}", 500
 
 if __name__ == "__main__":
     app.run(debug=True)
