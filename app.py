@@ -1,8 +1,12 @@
 import os
-from flask import Flask, render_template, request, Response, stream_with_context
-from yt_dlp import YoutubeDL
+from flask import Flask, render_template, request, send_file, jsonify
+import yt_dlp
 
 app = Flask(__name__)
+
+# Pastikan direktori downloads ada
+if not os.path.exists('downloads'):
+    os.makedirs('downloads')
 
 @app.route('/')
 def index():
@@ -12,35 +16,38 @@ def index():
 def download_video():
     video_url = request.form.get("url")
     if not video_url:
-        return "URL tidak boleh kosong", 400
+        return jsonify({"error": "URL tidak boleh kosong"}), 400
 
-    cookies_path = "cookies.txt"
-    output_path = "downloads/%(title)s.%(ext)s"  # Format nama file mengikuti YouTube
-
-    def generate():
+    try:
+        # Konfigurasi yt-dlp
         ydl_opts = {
-            "outtmpl": output_path,
-            "format": "bestvideo+bestaudio/best",
-            "cookies": cookies_path,
-            "progress_hooks": [progress_hook],
+            'format': 'best',  # Mengambil kualitas terbaik
+            'outtmpl': 'downloads/%(title)s.%(ext)s',  # Format nama file yang sesuai
+            'cookiesfile': 'cookies.txt',
+            'quiet': True,
+            'no_warnings': True,
         }
 
-        with YoutubeDL(ydl_opts) as ydl:
-            try:
-                ydl.download([video_url])
-            except Exception as e:
-                yield f"data: Kesalahan saat mengunduh video: {str(e)}\n\n"
+        # Download info video terlebih dahulu
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Ekstrak informasi video
+            info = ydl.extract_info(video_url, download=False)
+            video_title = info['title']
+            video_ext = info['ext']
+            filename = f"downloads/{video_title}.{video_ext}"
+            
+            # Download video
+            ydl.download([video_url])
+            
+            # Kirim file ke user dengan nama yang sesuai
+            return send_file(
+                filename,
+                as_attachment=True,
+                download_name=f"{video_title}.{video_ext}"
+            )
 
-    def progress_hook(d):
-        if d["status"] == "downloading":
-            yield f"data: Sedang mengunduh {d['_percent_str']} pada {d['_speed_str']}\n\n"
-        elif d["status"] == "finished":
-            yield "data: Unduhan selesai! Menyiapkan file...\n\n"
-
-    # Menggunakan stream untuk progres download
-    return Response(stream_with_context(generate()), mimetype="text/event-stream")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    # Pastikan folder 'downloads' tersedia
-    os.makedirs("downloads", exist_ok=True)
     app.run(debug=True)
