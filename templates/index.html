@@ -27,6 +27,20 @@
                 transform: rotate(360deg);
             }
         }
+
+        .format-card {
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .format-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .video-info {
+            display: none;
+        }
     </style>
 </head>
 
@@ -35,83 +49,125 @@
         <h1 class="text-center mb-4">YouTube Video Downloader</h1>
         <div class="row justify-content-center">
             <div class="col-md-8">
-                <form id="downloadForm" class="mb-4">
+                <form id="videoForm" class="mb-4">
                     <div class="input-group mb-3">
                         <input type="text" class="form-control" name="url" id="url" placeholder="Paste YouTube URL here"
                             required>
-                        <button class="btn btn-primary" type="submit">Download</button>
+                        <button class="btn btn-primary" type="submit">Get Video Info</button>
                     </div>
                 </form>
+
                 <div id="loader" class="loader"></div>
-                <div id="status" class="alert d-none"></div>
+                <div id="error" class="alert alert-danger d-none"></div>
+
+                <!-- Video Information Section -->
+                <div id="videoInfo" class="video-info mb-4">
+                    <div class="card">
+                        <div class="card-body">
+                            <h4 id="videoTitle" class="card-title"></h4>
+                            <p id="videoDuration" class="card-text"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Format Selection Section -->
+                <div id="formatList" class="row g-4"></div>
             </div>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        document.getElementById('downloadForm').addEventListener('submit', function (e) {
+        document.getElementById('videoForm').addEventListener('submit', async function (e) {
             e.preventDefault();
 
             const loader = document.getElementById('loader');
-            const status = document.getElementById('status');
+            const error = document.getElementById('error');
+            const videoInfo = document.getElementById('videoInfo');
+            const formatList = document.getElementById('formatList');
             const url = document.getElementById('url').value;
 
-            // Show loader
+            // Reset UI
             loader.style.display = 'block';
-            status.className = 'alert d-none';
+            error.classList.add('d-none');
+            videoInfo.style.display = 'none';
+            formatList.innerHTML = '';
 
-            // Create form data
-            const formData = new FormData();
-            formData.append('url', url);
+            try {
+                // Get video information
+                const formData = new FormData();
+                formData.append('url', url);
 
-            // Send request
-            fetch('/download', {
-                method: 'POST',
-                body: formData
-            })
-                .then(response => {
-                    if (response.headers.get('content-type')?.includes('application/json')) {
-                        return response.json().then(data => {
-                            throw new Error(data.error || 'Terjadi kesalahan saat mengunduh video');
-                        });
-                    }
-                    return response.blob();
-                })
-                .then(blob => {
-                    // Create download link
-                    const downloadUrl = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-
-                    // Get filename from Content-Disposition header if available
-                    const contentDisposition = response.headers.get('Content-Disposition');
-                    let filename = 'video';
-                    if (contentDisposition) {
-                        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
-                        if (filenameMatch) {
-                            filename = filenameMatch[1];
-                        }
-                    }
-
-                    a.href = downloadUrl;
-                    a.download = filename;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    window.URL.revokeObjectURL(downloadUrl);
-
-                    // Hide loader and show success message
-                    loader.style.display = 'none';
-                    status.className = 'alert alert-success';
-                    status.textContent = 'Download berhasil!';
-                })
-                .catch(error => {
-                    // Hide loader and show error message
-                    loader.style.display = 'none';
-                    status.className = 'alert alert-danger';
-                    status.textContent = error.message;
+                const response = await fetch('/get-video-info', {
+                    method: 'POST',
+                    body: formData
                 });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to get video information');
+                }
+
+                // Display video information
+                document.getElementById('videoTitle').textContent = data.title;
+                document.getElementById('videoDuration').textContent =
+                    `Duration: ${Math.floor(data.duration / 60)}:${(data.duration % 60).toString().padStart(2, '0')}`;
+                videoInfo.style.display = 'block';
+
+                // Display format options
+                data.formats.forEach(format => {
+                    const formatCard = document.createElement('div');
+                    formatCard.className = 'col-md-6 col-lg-4';
+                    formatCard.innerHTML = `
+                        <div class="card format-card">
+                            <div class="card-body">
+                                <h5 class="card-title">${format.resolution}</h5>
+                                <p class="card-text">
+                                    Format: ${format.ext}<br>
+                                    Size: ${formatFileSize(format.filesize)}<br>
+                                    Quality: ${format.format_note || 'Normal'}
+                                </p>
+                                <button class="btn btn-success btn-sm download-btn" 
+                                        data-url="${format.url}" 
+                                        data-filename="${data.title}.${format.ext}">
+                                    Download
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    formatList.appendChild(formatCard);
+                });
+
+                // Add click handlers for download buttons
+                document.querySelectorAll('.download-btn').forEach(btn => {
+                    btn.addEventListener('click', function () {
+                        const a = document.createElement('a');
+                        a.href = this.dataset.url;
+                        a.download = this.dataset.filename;
+                        a.click();
+                    });
+                });
+
+            } catch (err) {
+                error.textContent = err.message;
+                error.classList.remove('d-none');
+            } finally {
+                loader.style.display = 'none';
+            }
         });
+
+        function formatFileSize(bytes) {
+            if (!bytes) return 'Unknown size';
+            const units = ['B', 'KB', 'MB', 'GB'];
+            let size = bytes;
+            let unitIndex = 0;
+            while (size >= 1024 && unitIndex < units.length - 1) {
+                size /= 1024;
+                unitIndex++;
+            }
+            return `${size.toFixed(2)} ${units[unitIndex]}`;
+        }
     </script>
 </body>
 
