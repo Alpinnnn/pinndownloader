@@ -71,7 +71,7 @@
                 body: formData
             })
                 .then(response => {
-                    if (!response.ok) {
+                    if (response.headers.get('content-type')?.includes('application/json')) {
                         return response.json().then(data => {
                             throw new Error(data.error || 'Terjadi kesalahan saat mengunduh video');
                         });

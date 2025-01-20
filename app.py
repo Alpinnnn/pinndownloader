@@ -1,7 +1,7 @@
 import os
+import subprocess
 from flask import Flask, render_template, request, send_file, jsonify
-import yt_dlp
-import sys
+import glob
 
 app = Flask(__name__)
 
@@ -20,60 +20,65 @@ def download_video():
         return jsonify({"error": "URL tidak boleh kosong"}), 400
 
     try:
-        # Pastikan file cookies.txt ada
-        cookies_file = os.path.join(os.path.dirname(__file__), 'cookies.txt')
-        if not os.path.exists(cookies_file):
-            return jsonify({"error": "File cookies.txt tidak ditemukan"}), 500
-
-        # Konfigurasi yt-dlp dengan cookies
-        ydl_opts = {
-            'format': 'best',  # Mengambil kualitas terbaik
-            'outtmpl': 'downloads/%(title)s.%(ext)s',  # Format nama file yang sesuai
-            'cookiesfile': cookies_file,  # Menggunakan cookies.txt
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'ignoreerrors': True,
-            'no_color': True,
-            'verbose': True
-        }
-
-        # Download info video terlebih dahulu
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Ekstrak informasi video
-            info = ydl.extract_info(video_url, download=False)
-            if info is None:
-                return jsonify({"error": "Tidak dapat mengekstrak informasi video"}), 500
-                
-            video_title = info['title']
-            video_ext = info['ext']
-            filename = f"downloads/{video_title}.{video_ext}"
-            
-            # Download video
-            ydl.download([video_url])
-            
-            # Verifikasi file telah didownload
-            if not os.path.exists(filename):
-                return jsonify({"error": "File tidak berhasil didownload"}), 500
-            
+        # Bersihkan folder downloads terlebih dahulu
+        files = glob.glob('downloads/*')
+        for f in files:
             try:
-                # Kirim file ke user dengan nama yang sesuai
-                return send_file(
-                    filename,
-                    as_attachment=True,
-                    download_name=f"{video_title}.{video_ext}"
-                )
-            finally:
-                # Hapus file setelah dikirim
-                try:
-                    os.remove(filename)
-                except:
-                    pass  # Abaikan error jika file tidak dapat dihapus
+                os.remove(f)
+            except:
+                pass
+
+        # Jalankan yt-dlp untuk mendapatkan info video terlebih dahulu
+        info_command = [
+            "yt-dlp",
+            "--cookies", "cookies.txt",
+            "--print", "%(title)s.%(ext)s",
+            "--no-download",
+            video_url
+        ]
+        
+        result = subprocess.run(info_command, capture_output=True, text=True)
+        if result.returncode != 0:
+            return jsonify({"error": f"Error getting video info: {result.stderr}"}), 500
+            
+        expected_filename = result.stdout.strip()
+        
+        # Jalankan yt-dlp untuk download
+        download_command = [
+            "yt-dlp",
+            "--cookies", "cookies.txt",
+            "-f", "best",
+            "-o", f"downloads/%(title)s.%(ext)s",
+            video_url
+        ]
+        
+        result = subprocess.run(download_command, capture_output=True, text=True)
+        if result.returncode != 0:
+            return jsonify({"error": f"Error downloading: {result.stderr}"}), 500
+
+        # Cari file yang baru didownload
+        downloaded_files = glob.glob('downloads/*')
+        if not downloaded_files:
+            return jsonify({"error": "File tidak ditemukan setelah download"}), 500
+            
+        downloaded_file = downloaded_files[0]  # Ambil file pertama yang ditemukan
+        
+        try:
+            # Kirim file ke user
+            return send_file(
+                downloaded_file,
+                as_attachment=True,
+                download_name=os.path.basename(downloaded_file)
+            )
+        finally:
+            # Hapus file setelah dikirim
+            try:
+                os.remove(downloaded_file)
+            except:
+                pass
 
     except Exception as e:
-        error_message = str(e)
-        print(f"Error: {error_message}", file=sys.stderr)  # Log error ke stderr
-        return jsonify({"error": f"Terjadi kesalahan: {error_message}"}), 500
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)
