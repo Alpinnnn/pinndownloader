@@ -1,7 +1,6 @@
 import os
-import subprocess
-from flask import Flask, render_template, request, send_file
-import yt_dlp
+from flask import Flask, render_template, request, Response, stream_with_context
+from yt_dlp import YoutubeDL
 
 app = Flask(__name__)
 
@@ -16,36 +15,32 @@ def download_video():
         return "URL tidak boleh kosong", 400
 
     cookies_path = "cookies.txt"
-    output_path = "downloads/video.mp4"  # Path dasar untuk file output
+    output_path = "downloads/%(title)s.%(ext)s"  # Format nama file mengikuti YouTube
 
-    try:
-        # Jalankan yt-dlp
-        result = subprocess.run(
-            [
-                "yt-dlp",
-                "--cookies", cookies_path,
-                "-o", output_path,
-                video_url
-            ],
-            check=True,
-            capture_output=True,
-            text=True
-        )
+    def generate():
+        ydl_opts = {
+            "outtmpl": output_path,
+            "format": "bestvideo+bestaudio/best",
+            "cookies": cookies_path,
+            "progress_hooks": [progress_hook],
+        }
 
-        # Cek nama file output dari hasil yt-dlp
-        output_file = f"{output_path}.webm"
-        if not os.path.exists(output_file):
-            return "File tidak ditemukan setelah pengunduhan.", 500
+        with YoutubeDL(ydl_opts) as ydl:
+            try:
+                ydl.download([video_url])
+            except Exception as e:
+                yield f"data: Kesalahan saat mengunduh video: {str(e)}\n\n"
 
-        # Kirim file ke user
-        return send_file(output_file, as_attachment=True)
+    def progress_hook(d):
+        if d["status"] == "downloading":
+            yield f"data: Sedang mengunduh {d['_percent_str']} pada {d['_speed_str']}\n\n"
+        elif d["status"] == "finished":
+            yield "data: Unduhan selesai! Menyiapkan file...\n\n"
 
-    except subprocess.CalledProcessError as e:
-        return f"Terjadi kesalahan saat mengunduh video: {e.stderr or str(e)}", 500
-
-    except Exception as e:
-        return f"Kesalahan tak terduga: {str(e)}", 500
-
+    # Menggunakan stream untuk progres download
+    return Response(stream_with_context(generate()), mimetype="text/event-stream")
 
 if __name__ == "__main__":
+    # Pastikan folder 'downloads' tersedia
+    os.makedirs("downloads", exist_ok=True)
     app.run(debug=True)
